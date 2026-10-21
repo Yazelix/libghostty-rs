@@ -2215,6 +2215,230 @@ pub enum ProgressState {
     Pause = ffi::TerminalProgressState::PAUSE,
 }
 
+/// What a program status report (OSC 7501) says the program is doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, int_enum::IntEnum)]
+#[repr(i32)]
+#[non_exhaustive]
+pub enum ProgramStatusState {
+    /// At rest, waiting for the user's next instruction.
+    Idle = ffi::ProgramStatusState::IDLE,
+    /// Running on its own, possibly with a progress percentage.
+    Working = ffi::ProgramStatusState::WORKING,
+    /// Finished a piece of work whose result is ready for the user.
+    Done = ffi::ProgramStatusState::DONE,
+    /// Can't continue until the user does something; see
+    /// [`ProgramStatus::kind`] and [`ProgramStatus::message`].
+    Blocked = ffi::ProgramStatusState::BLOCKED,
+    /// Failed and stopped.
+    Error = ffi::ProgramStatusState::ERROR,
+    /// Not a real state: remove the record with this report's id and every
+    /// record beneath it, or every record if the id is empty.
+    Clear = ffi::ProgramStatusState::CLEAR,
+}
+
+/// What a blocked program needs from the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, int_enum::IntEnum)]
+#[repr(i32)]
+#[non_exhaustive]
+pub enum ProgramStatusKind {
+    /// The program didn't say, or the state isn't
+    /// [`ProgramStatusState::Blocked`].
+    None = ffi::ProgramStatusKind::NONE,
+    /// Approval to do something, such as "Apply these changes?".
+    Permission = ffi::ProgramStatusKind::PERMISSION,
+    /// An answer the user has to type.
+    Question = ffi::ProgramStatusKind::QUESTION,
+    /// A login, password, token, or other credential.
+    Auth = ffi::ProgramStatusKind::AUTH,
+}
+
+/// A program status report (OSC 7501).
+///
+/// The report and its strings are only valid during the callback, so copy
+/// what you keep. `title` and `message` are decoded and free of control
+/// characters, but they are still untrusted text from the program.
+#[derive(Debug, Copy, Clone)]
+pub struct ProgramStatus<'t> {
+    ptr: *const ffi::TerminalProgramStatus,
+    _phan: PhantomData<&'t ()>,
+}
+
+impl<'t> ProgramStatus<'t> {
+    unsafe fn from_raw(raw: *const ffi::TerminalProgramStatus) -> Self {
+        Self {
+            ptr: raw,
+            _phan: PhantomData,
+        }
+    }
+
+    /// What the program is doing.
+    pub fn state(self) -> Result<ProgramStatusState> {
+        // SAFETY: The report lives for the callback duration, and
+        // sized_field! reads only the fields its `size` covers.
+        unsafe { crate::sized_field!(self.ptr, ffi::TerminalProgramStatus, state) }
+            .and_then(|state| state.try_into().ok())
+            .ok_or(Error::InvalidValue)
+    }
+
+    /// What a blocked program needs. A kind this version doesn't know reads
+    /// as [`ProgramStatusKind::None`], as libghostty reports it.
+    #[must_use]
+    pub fn kind(self) -> ProgramStatusKind {
+        // SAFETY: As in `state`.
+        unsafe { crate::sized_field!(self.ptr, ffi::TerminalProgramStatus, kind) }
+            .and_then(|kind| kind.try_into().ok())
+            .unwrap_or(ProgramStatusKind::None)
+    }
+
+    /// How far along the work is, from 0 through 100, or `None` when there
+    /// is no percentage (the work is indeterminate or the state has none).
+    #[must_use]
+    pub fn progress(self) -> Option<u8> {
+        // SAFETY: As in `state`. libghostty sends -1 for no percentage,
+        // which the conversion turns into `None`.
+        unsafe { crate::sized_field!(self.ptr, ffi::TerminalProgramStatus, progress) }
+            .and_then(|progress| u8::try_from(progress).ok())
+    }
+
+    /// Which record this report is about; empty for the root record, the
+    /// program itself. A `/` nests records, as in `build/test`.
+    #[must_use]
+    pub fn id(self) -> &'t [u8] {
+        // SAFETY: As in `state`; the string lives for the callback, which `'t`
+        // covers.
+        unsafe { crate::sized_field!(self.ptr, ffi::TerminalProgramStatus, id) }
+            .map_or(&[], |s| unsafe { s.to_bytes() })
+    }
+
+    /// A stable machine name for the program, such as `cargo`, or empty.
+    #[must_use]
+    pub fn app(self) -> &'t [u8] {
+        // SAFETY: As in `id`.
+        unsafe { crate::sized_field!(self.ptr, ffi::TerminalProgramStatus, app) }
+            .map_or(&[], |s| unsafe { s.to_bytes() })
+    }
+
+    /// A short label for people, or empty.
+    #[must_use]
+    pub fn title(self) -> &'t [u8] {
+        // SAFETY: As in `id`.
+        unsafe { crate::sized_field!(self.ptr, ffi::TerminalProgramStatus, title) }
+            .map_or(&[], |s| unsafe { s.to_bytes() })
+    }
+
+    /// One line for people, decoded from the report's base64, or empty.
+    #[must_use]
+    pub fn message(self) -> &'t [u8] {
+        // SAFETY: As in `id`.
+        unsafe { crate::sized_field!(self.ptr, ffi::TerminalProgramStatus, message) }
+            .map_or(&[], |s| unsafe { s.to_bytes() })
+    }
+}
+
+/// The step of a command a shell integration event (OSC 133) reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, int_enum::IntEnum)]
+#[repr(i32)]
+#[non_exhaustive]
+pub enum SemanticPromptKind {
+    /// The shell started drawing a prompt; see [`SemanticPrompt::prompt_kind`].
+    PromptStart = ffi::SemanticPromptKind::PROMPT_START,
+    /// The user's input starts.
+    InputStart = ffi::SemanticPromptKind::INPUT_START,
+    /// The command's output starts.
+    OutputStart = ffi::SemanticPromptKind::OUTPUT_START,
+    /// The command ended.
+    CommandEnd = ffi::SemanticPromptKind::COMMAND_END,
+}
+
+/// Which prompt a [`SemanticPromptKind::PromptStart`] event starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, int_enum::IntEnum)]
+#[repr(i32)]
+#[non_exhaustive]
+pub enum SemanticPromptPromptKind {
+    /// The main prompt shown before each command, and the kind used when
+    /// the shell doesn't say.
+    Primary = ffi::SemanticPromptPromptKind::PRIMARY,
+    /// A prompt drawn at the right edge of the line, such as zsh's RPROMPT.
+    Right = ffi::SemanticPromptPromptKind::RIGHT,
+    /// A prompt at the start of an extra line of a command that spans
+    /// several lines.
+    Continuation = ffi::SemanticPromptPromptKind::CONTINUATION,
+    /// Another prompt for an extra line of input, such as bash's PS2.
+    /// Shells differ in whether they report extra lines as continuation or
+    /// secondary prompts, so most applications treat the two the same.
+    Secondary = ffi::SemanticPromptPromptKind::SECONDARY,
+}
+
+/// A shell integration event (OSC 133). The event and its strings are only
+/// valid during the callback.
+#[derive(Debug, Copy, Clone)]
+pub struct SemanticPrompt<'t> {
+    ptr: *const ffi::TerminalSemanticPrompt,
+    _phan: PhantomData<&'t ()>,
+}
+
+impl<'t> SemanticPrompt<'t> {
+    unsafe fn from_raw(raw: *const ffi::TerminalSemanticPrompt) -> Self {
+        Self {
+            ptr: raw,
+            _phan: PhantomData,
+        }
+    }
+
+    /// Which step this event reports. Shells may skip or repeat steps, and
+    /// kinds added after this version are an error, which you can ignore.
+    pub fn kind(self) -> Result<SemanticPromptKind> {
+        // SAFETY: The event lives for the callback duration, and
+        // sized_field! reads only the fields its `size` covers.
+        unsafe { crate::sized_field!(self.ptr, ffi::TerminalSemanticPrompt, kind) }
+            .and_then(|kind| kind.try_into().ok())
+            .ok_or(Error::InvalidValue)
+    }
+
+    /// Which prompt starts, for [`SemanticPromptKind::PromptStart`];
+    /// [`SemanticPromptPromptKind::Primary`] for other kinds.
+    pub fn prompt_kind(self) -> Result<SemanticPromptPromptKind> {
+        // SAFETY: As in `kind`.
+        unsafe { crate::sized_field!(self.ptr, ffi::TerminalSemanticPrompt, prompt_kind) }
+            .and_then(|kind| kind.try_into().ok())
+            .ok_or(Error::InvalidValue)
+    }
+
+    /// The command's exit code, for [`SemanticPromptKind::CommandEnd`] when
+    /// the shell reported one.
+    #[must_use]
+    pub fn exit_code(self) -> Option<i32> {
+        // SAFETY: As in `kind`.
+        let (has, code) = unsafe {
+            (
+                crate::sized_field!(self.ptr, ffi::TerminalSemanticPrompt, has_exit_code),
+                crate::sized_field!(self.ptr, ffi::TerminalSemanticPrompt, exit_code),
+            )
+        };
+        has.unwrap_or(false).then_some(code).flatten()
+    }
+
+    /// The decoded command line, for [`SemanticPromptKind::OutputStart`]
+    /// when the shell sent one, or empty.
+    #[must_use]
+    pub fn command(self) -> &'t [u8] {
+        // SAFETY: As in `kind`; the string lives for the callback, which `'t`
+        // covers.
+        unsafe { crate::sized_field!(self.ptr, ffi::TerminalSemanticPrompt, command) }
+            .map_or(&[], |s| unsafe { s.to_bytes() })
+    }
+
+    /// What went wrong, for [`SemanticPromptKind::CommandEnd`] when the shell
+    /// sent it, or empty. Few shells send this; the exit code is the usual
+    /// signal.
+    #[must_use]
+    pub fn error(self) -> &'t [u8] {
+        // SAFETY: As in `command`.
+        unsafe { crate::sized_field!(self.ptr, ffi::TerminalSemanticPrompt, error) }
+            .map_or(&[], |s| unsafe { s.to_bytes() })
+    }
+}
+
 //---------------------------------------
 // Callbacks
 //---------------------------------------
@@ -2787,6 +3011,47 @@ handlers! {
         to = <'t>ProgressReportFn(ProgressReport<'t>),
     ) |term, func| {
         func(term, unsafe { ProgressReport::from_raw(progress) });
+    }
+
+    /// Call the given function for each valid program status report
+    /// (OSC 7501). Setting it also makes the terminal answer the
+    /// `OSC 7501;?` support query through the pty write callback.
+    ///
+    /// The terminal doesn't keep reports, so keep one record per id, as the
+    /// specification (<https://www.superlogical.com/rex/docs/build/program-status>)
+    /// describes: a report replaces its record completely; a
+    /// [`ProgramStatusState::Clear`] report removes its record and every
+    /// record beneath it; a record without an app takes the app of its
+    /// nearest ancestor; when a new prompt starts
+    /// ([`SemanticPromptKind::PromptStart`]) or the program exits, remove
+    /// working and blocked records; keep at most 256 records and allow at
+    /// least 64, removing the one updated longest ago. When the program sends a
+    /// full reset (RIS, `ESC c`), this is called with a
+    /// [`ProgramStatusState::Clear`] report and an empty id. A reset made
+    /// through [`Terminal::reset`] doesn't call it, so clear your records
+    /// yourself then.
+    pub fn on_program_status(
+        &mut self,
+        tag = PROGRAM_STATUS,
+        from = TerminalProgramStatusFn(
+            report: *const ffi::TerminalProgramStatus
+        ),
+        to = <'t>ProgramStatusFn(ProgramStatus<'t>),
+    ) |term, func| {
+        func(term, unsafe { ProgramStatus::from_raw(report) });
+    }
+
+    /// Call the given function when the shell reports a step of a command
+    /// (OSC 133).
+    pub fn on_semantic_prompt(
+        &mut self,
+        tag = SEMANTIC_PROMPT,
+        from = TerminalSemanticPromptFn(
+            event: *const ffi::TerminalSemanticPrompt
+        ),
+        to = <'t>SemanticPromptFn(SemanticPrompt<'t>),
+    ) |term, func| {
+        func(term, unsafe { SemanticPrompt::from_raw(event) });
     }
 }
 
@@ -3853,6 +4118,187 @@ mod tests {
         assert!(!read.granted());
         assert!(!read.can_remember());
         read.reply(Ok(&[]), &[], false);
+    }
+
+    /// A program status report, copied out of its callback.
+    #[derive(Debug, PartialEq, Eq)]
+    struct SeenStatus {
+        state: Option<ProgramStatusState>,
+        kind: ProgramStatusKind,
+        progress: Option<u8>,
+        id: Vec<u8>,
+        app: Vec<u8>,
+        title: Vec<u8>,
+        message: Vec<u8>,
+    }
+
+    /// A semantic prompt event, copied out of its callback.
+    #[derive(Debug, PartialEq, Eq)]
+    struct SeenPrompt {
+        kind: Option<SemanticPromptKind>,
+        prompt_kind: Option<SemanticPromptPromptKind>,
+        exit_code: Option<i32>,
+        command: Vec<u8>,
+        error: Vec<u8>,
+    }
+
+    /// Feed `input` to a terminal with the program status and semantic
+    /// prompt callbacks set, returning what they saw and the pty output.
+    ///
+    /// Assertions happen outside the callbacks: a panic inside one would
+    /// abort the whole test binary instead of failing the test.
+    fn with_status_callbacks(input: &[u8]) -> (Vec<SeenStatus>, Vec<SeenPrompt>, Vec<u8>) {
+        let statuses = RefCell::new(Vec::new());
+        let prompts = RefCell::new(Vec::new());
+        let output = RefCell::new(Vec::new());
+        let mut terminal = Terminal::new(80, 24).expect("terminal should initialize");
+        terminal
+            .on_pty_write(|_term, bytes| output.borrow_mut().extend_from_slice(bytes))
+            .expect("callback should register");
+        terminal
+            .on_program_status(|_term, report| {
+                statuses.borrow_mut().push(SeenStatus {
+                    state: report.state().ok(),
+                    kind: report.kind(),
+                    progress: report.progress(),
+                    id: report.id().to_vec(),
+                    app: report.app().to_vec(),
+                    title: report.title().to_vec(),
+                    message: report.message().to_vec(),
+                });
+            })
+            .expect("callback should register");
+        terminal
+            .on_semantic_prompt(|_term, event| {
+                prompts.borrow_mut().push(SeenPrompt {
+                    kind: event.kind().ok(),
+                    prompt_kind: event.prompt_kind().ok(),
+                    exit_code: event.exit_code(),
+                    command: event.command().to_vec(),
+                    error: event.error().to_vec(),
+                });
+            })
+            .expect("callback should register");
+        terminal.vt_write(input);
+        drop(terminal);
+        (
+            statuses.into_inner(),
+            prompts.into_inner(),
+            output.into_inner(),
+        )
+    }
+
+    /// A report with no fields beyond `state`.
+    fn bare_status(state: ProgramStatusState, id: &[u8]) -> SeenStatus {
+        SeenStatus {
+            state: Some(state),
+            kind: ProgramStatusKind::None,
+            progress: None,
+            id: id.to_vec(),
+            app: Vec::new(),
+            title: Vec::new(),
+            message: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn program_status_report_carries_every_field() {
+        let (statuses, _, _) = with_status_callbacks(
+            b"\x1b]7501;state=blocked:kind=permission:progress=42:id=tf/plan:app=terraform\
+              :title=UGxhbg==:msg=QXBwbHk/\x1b\\",
+        );
+        assert_eq!(
+            statuses,
+            [SeenStatus {
+                state: Some(ProgramStatusState::Blocked),
+                kind: ProgramStatusKind::Permission,
+                progress: Some(42),
+                id: b"tf/plan".to_vec(),
+                app: b"terraform".to_vec(),
+                title: b"Plan".to_vec(),
+                message: b"Apply?".to_vec(),
+            }]
+        );
+    }
+
+    #[test]
+    fn program_status_without_progress_is_indeterminate() {
+        let (statuses, _, _) = with_status_callbacks(b"\x1b]7501;state=working\x1b\\");
+        assert_eq!(statuses, [bare_status(ProgramStatusState::Working, b"")]);
+    }
+
+    #[test]
+    fn program_status_probe_answers_before_da1() {
+        let (_, _, output) = with_status_callbacks(b"\x1b]7501;?\x1b\\\x1b[c");
+        let reply: &[u8] =
+            b"\x1b]7501;?:states=idle,working,done,blocked,error:kinds=permission,question,auth\x1b\\";
+        let da1 = output
+            .strip_prefix(reply)
+            .unwrap_or_else(|| panic!("probe reply must come first: {output:?}"));
+        assert!(
+            da1.starts_with(b"\x1b[?") && da1.ends_with(b"c"),
+            "DA1 reply must follow: {output:?}"
+        );
+    }
+
+    #[test]
+    fn program_status_probe_is_silent_without_callback() {
+        // The pty output for `input` from a terminal without a program
+        // status callback.
+        let replies = |input: &[u8]| {
+            let output = RefCell::new(Vec::new());
+            let mut terminal = Terminal::new(80, 24).expect("terminal should initialize");
+            terminal
+                .on_pty_write(|_term, bytes| output.borrow_mut().extend_from_slice(bytes))
+                .expect("callback should register");
+            terminal.vt_write(input);
+            drop(terminal);
+            output.into_inner()
+        };
+        let da1 = replies(b"\x1b[c");
+        assert!(!da1.is_empty(), "DA1 must be answered");
+        assert_eq!(replies(b"\x1b]7501;?\x1b\\\x1b[c"), da1);
+    }
+
+    #[test]
+    fn full_reset_clears_every_program_status_record() {
+        let (statuses, _, _) =
+            with_status_callbacks(b"\x1b]7501;state=working:id=build\x1b\\\x1bc");
+        assert_eq!(
+            statuses,
+            [
+                bare_status(ProgramStatusState::Working, b"build"),
+                bare_status(ProgramStatusState::Clear, b""),
+            ]
+        );
+    }
+
+    #[test]
+    fn semantic_prompt_reports_each_command_step() {
+        use SemanticPromptKind::{CommandEnd, InputStart, OutputStart, PromptStart};
+        use SemanticPromptPromptKind::{Primary, Right};
+
+        let (_, prompts, _) = with_status_callbacks(
+            b"\x1b]133;P;k=r\x07\x1b]133;B\x07\x1b]133;C;cmdline_url=ls%20-la\x07\
+              \x1b]133;D;-1;err=boom\x07\x1b]133;D\x07",
+        );
+        let step = |kind, prompt_kind, exit_code, command: &[u8], error: &[u8]| SeenPrompt {
+            kind: Some(kind),
+            prompt_kind: Some(prompt_kind),
+            exit_code,
+            command: command.to_vec(),
+            error: error.to_vec(),
+        };
+        assert_eq!(
+            prompts,
+            [
+                step(PromptStart, Right, None, b"", b""),
+                step(InputStart, Primary, None, b"", b""),
+                step(OutputStart, Primary, None, b"ls -la", b""),
+                step(CommandEnd, Primary, Some(-1), b"", b"boom"),
+                step(CommandEnd, Primary, None, b"", b""),
+            ]
+        );
     }
 }
 
