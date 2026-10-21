@@ -165,6 +165,13 @@ pub struct RenderStateRowCellsImpl {
 pub type RenderStateRowCells = *mut RenderStateRowCellsImpl;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
+pub struct RenderStateImageIteratorImpl {
+    _unused: [u8; 0],
+}
+#[doc = " Opaque handle to an iterator over the image placements of a render\n state.\n"]
+pub type RenderStateImageIterator = *mut RenderStateImageIteratorImpl;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
 pub struct SearchImpl {
     _unused: [u8; 0],
 }
@@ -1432,7 +1439,7 @@ pub struct TerminalSelectionFormatOptions {
     pub emit: FormatterFormat::Type,
     #[doc = " Whether to unwrap soft-wrapped lines."]
     pub unwrap: bool,
-    #[doc = " Whether to trim trailing whitespace on non-blank lines."]
+    #[doc = " Whether to trim trailing whitespace on non-blank lines. Trailing blank\n lines are always trimmed, except in VT output without trimming, where\n they are kept as part of the layout."]
     pub trim: bool,
     #[doc = " Optional selection to format.\n\n If NULL, the terminal's current active selection is used. If the terminal\n has no active selection, formatting returns GHOSTTY_NO_VALUE.\n\n If non-NULL, the pointed-to selection must be a valid snapshot selection\n for this terminal and must obey GhosttySelection lifetime rules."]
     pub selection: *const Selection,
@@ -1870,11 +1877,13 @@ pub mod OscCommandType {
     pub const KITTY_TEXT_SIZING: Type = 22;
     pub const KITTY_CLIPBOARD_PROTOCOL: Type = 23;
     pub const KITTY_DND_PROTOCOL: Type = 24;
-    pub const CONTEXT_SIGNAL: Type = 25;
+    pub const HIERARCHICAL_CONTEXT: Type = 25;
     pub const KITTY_DESKTOP_NOTIFICATION: Type = 26;
     #[doc = " An OSC sequence whose number the parser does not implement. Read it\n with the GHOSTTY_OSC_DATA_UNKNOWN_* data types.\n\n Only produced when GHOSTTY_OSC_OPT_UNKNOWN_MAX_BYTES is nonzero.\n Otherwise these sequences are GHOSTTY_OSC_COMMAND_INVALID."]
     pub const UNKNOWN: Type = 27;
-    #[doc = " An OSC sequence whose number the parser does not implement. Read it\n with the GHOSTTY_OSC_DATA_UNKNOWN_* data types.\n\n Only produced when GHOSTTY_OSC_OPT_UNKNOWN_MAX_BYTES is nonzero.\n Otherwise these sequences are GHOSTTY_OSC_COMMAND_INVALID."]
+    #[doc = " A program status report or support query (OSC 7501), which a program\n sends to say what it is doing, such as working or waiting on the user.\n\n The OSC parser only identifies this command. To receive the report's\n contents, use a terminal with GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS\n instead (see GhosttyTerminalProgramStatus)."]
+    pub const PROGRAM_STATUS: Type = 28;
+    #[doc = " A program status report or support query (OSC 7501), which a program\n sends to say what it is doing, such as working or waiting on the user.\n\n The OSC parser only identifies this command. To receive the report's\n contents, use a terminal with GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS\n instead (see GhosttyTerminalProgramStatus)."]
     pub const TYPE_MAX_VALUE: Type = 2147483647;
 }
 pub mod OscTerminator {
@@ -1962,7 +1971,9 @@ pub mod SizeReportStyle {
     pub const CSI_16_T: Type = 2;
     #[doc = " XTWINOPS text area size in characters: ESC [ 8 ; rows ; cols t"]
     pub const CSI_18_T: Type = 3;
-    #[doc = " XTWINOPS text area size in characters: ESC [ 8 ; rows ; cols t"]
+    #[doc = " XTWINOPS screen size in characters: ESC [ 9 ; rows ; cols t\n\n  The physical screen size is not known, so this reports the text\n  area size in characters, the same as CSI 18 t."]
+    pub const CSI_19_T: Type = 4;
+    #[doc = " XTWINOPS screen size in characters: ESC [ 9 ; rows ; cols t\n\n  The physical screen size is not known, so this reports the text\n  area size in characters, the same as CSI 18 t."]
     pub const STYLE_MAX_VALUE: Type = 2147483647;
 }
 #[doc = " Terminal size information for encoding size reports."]
@@ -2022,7 +2033,7 @@ pub mod KittyGraphicsPlacementData {
     pub const IMAGE_ID: Type = 1;
     #[doc = " The placement ID.\n\n Output type: uint32_t *"]
     pub const PLACEMENT_ID: Type = 2;
-    #[doc = " Whether this is a virtual placement (unicode placeholder).\n\n Output type: bool *"]
+    #[doc = " Whether this is a virtual placement (unicode placeholder).\n\n A virtual placement is drawn wherever placeholder cells for it\n appear, so it has no position here. Use the render state's image\n list to draw it. See \"Unicode Placeholders\" in the\n\n Output type: bool *"]
     pub const IS_VIRTUAL: Type = 3;
     #[doc = " Pixel offset from the left edge of the cell.\n\n Output type: uint32_t *"]
     pub const X_OFFSET: Type = 4;
@@ -2174,6 +2185,14 @@ unsafe extern "C" {
     ) -> Result::Type;
 }
 unsafe extern "C" {
+    #[doc = " Advance playing animations and get the time of the next frame.\n\n Every playing animation moves to the frame that is due at `now_ms`.\n An animation moves forward at most one frame per call. If calls\n arrive late, playback slows down rather than skipping frames.\n\n Images that moved to a new frame get a new\n\n Time is measured in milliseconds on a clock you choose, such as the\n time since your application started. The clock must only move\n forward, and you must keep using the same clock with the same\n starting point for as long as the terminal exists. The time written\n to `next_ms` uses the same clock.\n\n This call changes the image storage. Like ghostty_terminal_vt_write(),\n it invalidates any @ref GhosttyKittyGraphicsImage handles and image\n data pointers you are holding, so look images up again afterwards.\n The @ref GhosttyKittyGraphics handle itself stays valid.\n\n Call this once each time you prepare a frame to draw, not in a loop.\n The \"Animation\" section of @ref kitty_graphics explains how to\n schedule redraws with the returned time and includes an example.\n\n   milliseconds on the same clock as `now_ms`. Only written when the\n   function returns GHOSTTY_SUCCESS.\n   set, GHOSTTY_NO_VALUE if nothing is playing or Kitty graphics are\n   disabled at build time, GHOSTTY_INVALID_VALUE if `next_ms` is NULL\n"]
+    pub fn ghostty_kitty_graphics_animation_tick(
+        graphics: KittyGraphics,
+        now_ms: u64,
+        next_ms: *mut u64,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
     #[doc = " Look up a Kitty graphics image by its image ID.\n\n Returns NULL if no image with the given ID exists or if Kitty graphics\n are disabled at build time.\n\n"]
     pub fn ghostty_kitty_graphics_image(
         graphics: KittyGraphics,
@@ -2269,7 +2288,7 @@ unsafe extern "C" {
     ) -> Result::Type;
 }
 unsafe extern "C" {
-    #[doc = " Get the viewport-relative grid position of the current placement.\n\n Converts the placement's internal pin to viewport-relative column and\n row coordinates. The returned coordinates represent the top-left\n corner of the placement in the viewport's grid coordinate space.\n\n The row value can be negative when the placement's origin has\n scrolled above the top of the viewport. For example, a 4-row\n image that has scrolled up by 2 rows returns row=-2, meaning\n its top 2 rows are above the visible area but its bottom 2 rows\n are still on screen. Embedders should use these coordinates\n directly when computing the destination rectangle for rendering;\n the embedder is responsible for clipping the portion of the image\n that falls outside the viewport.\n\n Returns GHOSTTY_SUCCESS for any placement that is at least\n partially visible in the viewport. Returns GHOSTTY_NO_VALUE when\n the placement is completely outside the viewport (its bottom edge\n is above the viewport or its top edge is at or below the last\n viewport row), or when the placement is a virtual (unicode\n placeholder) placement.\n\n             (may be negative for partially visible placements)\n         off-screen or virtual, GHOSTTY_INVALID_VALUE if any handle\n         is NULL or the iterator is not positioned\n"]
+    #[doc = " Get the viewport-relative grid position of the current placement.\n\n Converts the placement's internal pin to viewport-relative column and\n row coordinates. The returned coordinates represent the top-left\n corner of the placement in the viewport's grid coordinate space.\n\n The row value can be negative when the placement's origin has\n scrolled above the top of the viewport. For example, a 4-row\n image that has scrolled up by 2 rows returns row=-2, meaning\n its top 2 rows are above the visible area but its bottom 2 rows\n are still on screen. Embedders should use these coordinates\n directly when computing the destination rectangle for rendering;\n the embedder is responsible for clipping the portion of the image\n that falls outside the viewport.\n\n Returns GHOSTTY_SUCCESS for any placement that is at least\n partially visible in the viewport. Returns GHOSTTY_NO_VALUE when\n the placement is completely outside the viewport (its bottom edge\n is above the viewport or its top edge is at or below the last\n viewport row), or when the placement is a virtual (unicode\n placeholder) placement. To draw virtual placements, and relative\n placements attached to them, see \"Unicode Placeholders\" in the\n\n             (may be negative for partially visible placements)\n         off-screen or virtual, GHOSTTY_INVALID_VALUE if any handle\n         is NULL or the iterator is not positioned\n"]
     pub fn ghostty_kitty_graphics_placement_viewport_pos(
         iterator: KittyGraphicsPlacementIterator,
         image: KittyGraphicsImage,
@@ -2290,7 +2309,7 @@ unsafe extern "C" {
     ) -> Result::Type;
 }
 unsafe extern "C" {
-    #[doc = " Get all rendering geometry for a placement in a single call.\n\n Combines pixel size, grid size, viewport position, and source\n rectangle into one struct. Initialize with\n GHOSTTY_INIT_SIZED(GhosttyKittyGraphicsPlacementRenderInfo).\n\n When viewport_visible is false, the placement is fully off-screen\n or is a virtual placement; viewport_col and viewport_row may\n contain meaningless values in that case.\n\n"]
+    #[doc = " Get all rendering geometry for a placement in a single call.\n\n Combines pixel size, grid size, viewport position, and source\n rectangle into one struct. Initialize with\n GHOSTTY_INIT_SIZED(GhosttyKittyGraphicsPlacementRenderInfo).\n\n When viewport_visible is false, the placement is fully off-screen\n or is a virtual placement; viewport_col and viewport_row may\n contain meaningless values in that case. The render state gives the\n same information for virtual placements. See \"Unicode Placeholders\"\n in the @ref kitty_graphics documentation.\n\n"]
     pub fn ghostty_kitty_graphics_placement_render_info(
         iterator: KittyGraphicsPlacementIterator,
         image: KittyGraphicsImage,
@@ -2331,7 +2350,9 @@ pub mod TerminalScrollViewportTag {
     pub const DELTA: Type = 2;
     #[doc = " Scroll to an absolute row offset from the top of the scrollable\n area. Row 0 is the top of the scrollback and the requested row\n becomes the first visible row of the viewport. The value is\n clamped so the viewport never scrolls beyond the top of the\n active area. If the terminal has no scrollback (e.g. the\n alternate screen is active), the viewport always remains on the\n active area.\n\n This is the same row space as the offset field of\n GhosttyTerminalScrollbar, so a scrollbar position obtained from\n GHOSTTY_TERMINAL_DATA_SCROLLBAR round-trips cleanly."]
     pub const ROW: Type = 3;
-    #[doc = " Scroll to an absolute row offset from the top of the scrollable\n area. Row 0 is the top of the scrollback and the requested row\n becomes the first visible row of the viewport. The value is\n clamped so the viewport never scrolls beyond the top of the\n active area. If the terminal has no scrollback (e.g. the\n alternate screen is active), the viewport always remains on the\n active area.\n\n This is the same row space as the offset field of\n GhosttyTerminalScrollbar, so a scrollbar position obtained from\n GHOSTTY_TERMINAL_DATA_SCROLLBAR round-trips cleanly."]
+    #[doc = " Scroll by a number of prompts relative to the viewport top. Negative\n values move backward and positive values move forward. Requires semantic\n prompt markers from the shell. Zero or no matching prompt is a no-op.\n If fewer prompts remain than requested, move to the last matching prompt,\n clamped to the active area.\n\n Moving forward through a final prompt continuation can snap to the active\n area even when there is no newer prompt."]
+    pub const DELTA_PROMPT: Type = 4;
+    #[doc = " Scroll by a number of prompts relative to the viewport top. Negative\n values move backward and positive values move forward. Requires semantic\n prompt markers from the shell. Zero or no matching prompt is a no-op.\n If fewer prompts remain than requested, move to the last matching prompt,\n clamped to the active area.\n\n Moving forward through a final prompt continuation can snap to the active\n area even when there is no newer prompt."]
     pub const MAX_VALUE: Type = 2147483647;
 }
 #[doc = " Scroll viewport value.\n"]
@@ -2342,6 +2363,8 @@ pub union TerminalScrollViewportValue {
     pub delta: isize,
     #[doc = " Absolute row offset (only used with GHOSTTY_SCROLL_VIEWPORT_ROW)."]
     pub row: usize,
+    #[doc = " Prompt delta (only used with GHOSTTY_SCROLL_VIEWPORT_DELTA_PROMPT)."]
+    pub delta_prompt: isize,
     #[doc = " Padding for ABI compatibility. Do not use."]
     pub _padding: [u64; 2usize],
 }
@@ -2355,6 +2378,8 @@ const _: () = {
         [::std::mem::offset_of!(TerminalScrollViewportValue, delta) - 0usize];
     ["Offset of field: TerminalScrollViewportValue::row"]
         [::std::mem::offset_of!(TerminalScrollViewportValue, row) - 0usize];
+    ["Offset of field: TerminalScrollViewportValue::delta_prompt"]
+        [::std::mem::offset_of!(TerminalScrollViewportValue, delta_prompt) - 0usize];
     ["Offset of field: TerminalScrollViewportValue::_padding"]
         [::std::mem::offset_of!(TerminalScrollViewportValue, _padding) - 0usize];
 };
@@ -3030,6 +3055,98 @@ pub type TerminalProgressReportFn = ::std::option::Option<
         report: *const TerminalProgressReport,
     ),
 >;
+pub mod ProgramStatusState {
+    #[doc = " What a program says it is doing, in a program status report (OSC 7501).\n\n See GhosttyTerminalProgramStatus for an overview of the protocol.\n"]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " At rest, waiting for the user's next instruction. For example, an\n interactive tool sitting at its own prompt."]
+    pub const IDLE: Type = 0;
+    #[doc = " Running on its own. The report may include a progress percentage."]
+    pub const WORKING: Type = 1;
+    #[doc = " Finished a piece of work, and the result is ready for the user to\n look at."]
+    pub const DONE: Type = 2;
+    #[doc = " Can't continue until the user does something. `kind` says what the\n program needs and `message` says why. The report may include a\n progress percentage."]
+    pub const BLOCKED: Type = 3;
+    #[doc = " Failed and stopped."]
+    pub const ERROR: Type = 4;
+    #[doc = " Not a real state. Remove the record with this report's id and every\n record beneath it. If the id is empty, remove every record."]
+    pub const CLEAR: Type = 5;
+    #[doc = " Not a real state. Remove the record with this report's id and every\n record beneath it. If the id is empty, remove every record."]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+pub mod ProgramStatusKind {
+    #[doc = " What a blocked program needs from the user, in a program status report\n (OSC 7501).\n"]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " The program didn't say, or the state isn't\n GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED."]
+    pub const NONE: Type = 0;
+    #[doc = " Approval to do something, such as \"Apply these changes?\"."]
+    pub const PERMISSION: Type = 1;
+    #[doc = " An answer the user has to type."]
+    pub const QUESTION: Type = 2;
+    #[doc = " A login, password, token, or other credential."]
+    pub const AUTH: Type = 3;
+    #[doc = " A login, password, token, or other credential."]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+#[doc = " A program status report (OSC 7501).\n\n The program status protocol lets a program tell the terminal what it is\n doing: idle, working, done, waiting on the user, or failed, and why. It\n is meant for long-running work like builds, deploys, and coding agents,\n where the user is often looking at something else and wants to know when\n the work finishes or needs them. The protocol only describes state. How\n to show it, if at all, is up to your application.\n\n The full specification is at\n https://www.superlogical.com/rex/docs/build/program-status\n\n For example, a program waiting for the user to approve a change sends\n this, where ST is the string terminator (ESC \\ or BEL):\n\n ESC ] 7501 ; state=blocked:kind=permission:app=terraform:msg=QXBwbHk/ ST\n\n The callback then receives a report with:\n\n - `state`: GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED\n - `kind`: GHOSTTY_PROGRAM_STATUS_KIND_PERMISSION\n - `progress`: -1, because the program didn't send one, so the work is\n   indeterminate\n - `id`: empty, because this is the root record\n - `app`: \"terraform\"\n - `title`: empty\n - `message`: \"Apply?\", decoded from the base64 in `msg`\n\n Only reports that pass every check in the specification reach the\n callback. Text that the program didn't send is an empty string (len=0),\n never NULL. All strings are only valid during the callback, so copy any\n you want to keep.\n\n This is a sized struct. Later versions may add fields at the end, and\n `size` tells you which fields are present. Every field below has been\n present since this struct was introduced.\n"]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct TerminalProgramStatus {
+    #[doc = " Size of this struct in bytes."]
+    pub size: usize,
+    #[doc = " What the program is doing."]
+    pub state: ProgramStatusState::Type,
+    #[doc = " What the program needs from the user. Only set for\n GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED. It is\n GHOSTTY_PROGRAM_STATUS_KIND_NONE for other states, when the program\n didn't say, or when it sent a kind this version doesn't know."]
+    pub kind: ProgramStatusKind::Type,
+    #[doc = " How far along the work is, from 0 through 100, or -1 when there is\n no percentage. Only set for GHOSTTY_PROGRAM_STATUS_STATE_WORKING and\n GHOSTTY_PROGRAM_STATUS_STATE_BLOCKED. For those states, -1 means the\n work is indeterminate: the program is busy but has no percentage to\n report. It is also -1 for other states and when the program sent a\n value outside that range."]
+    pub progress: i8,
+    #[doc = " Which record this report is about. Empty for the root record.\n\n A program that only reports on itself leaves this empty. A program\n that reports on several things at once gives each its own id, such as\n \"us-east\" and \"eu-west\" for a deploy to two regions. A \"/\" makes one\n record the child of another, so \"build/test\" is a child of \"build\".\n The parent record doesn't have to exist."]
+    pub id: String,
+    #[doc = " A stable name for the program that a machine can match on, such as\n \"cargo\", \"terraform\", or \"claude-code\". Use it as a key for grouping,\n filtering, or choosing an icon. It is not a label. The label is\n `title`. Empty when the report didn't include one. See\n GhosttyTerminalProgramStatusFn for how an empty app is filled in from\n a parent record."]
+    pub app: String,
+    #[doc = " A short label for the record, meant for people. Programs that report\n several records use this to tell them apart."]
+    pub title: String,
+    #[doc = " One line of text for people, saying what the record is doing,\n waiting for, or has finished. You may shorten it to fit, but don't\n try to read meaning into it."]
+    pub message: String,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of TerminalProgramStatus"][::std::mem::size_of::<TerminalProgramStatus>() - 88usize];
+    ["Alignment of TerminalProgramStatus"]
+        [::std::mem::align_of::<TerminalProgramStatus>() - 8usize];
+    ["Offset of field: TerminalProgramStatus::size"]
+        [::std::mem::offset_of!(TerminalProgramStatus, size) - 0usize];
+    ["Offset of field: TerminalProgramStatus::state"]
+        [::std::mem::offset_of!(TerminalProgramStatus, state) - 8usize];
+    ["Offset of field: TerminalProgramStatus::kind"]
+        [::std::mem::offset_of!(TerminalProgramStatus, kind) - 12usize];
+    ["Offset of field: TerminalProgramStatus::progress"]
+        [::std::mem::offset_of!(TerminalProgramStatus, progress) - 16usize];
+    ["Offset of field: TerminalProgramStatus::id"]
+        [::std::mem::offset_of!(TerminalProgramStatus, id) - 24usize];
+    ["Offset of field: TerminalProgramStatus::app"]
+        [::std::mem::offset_of!(TerminalProgramStatus, app) - 40usize];
+    ["Offset of field: TerminalProgramStatus::title"]
+        [::std::mem::offset_of!(TerminalProgramStatus, title) - 56usize];
+    ["Offset of field: TerminalProgramStatus::message"]
+        [::std::mem::offset_of!(TerminalProgramStatus, message) - 72usize];
+};
+impl Default for TerminalProgramStatus {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " Callback function type for program status reports (OSC 7501).\n\n Called synchronously each time the running program sends a valid\n report. See GhosttyTerminalProgramStatus for what a report contains.\n\n The terminal doesn't store reports, so your application keeps them. To\n follow the specification, keep one record per id. A report with an empty\n id is about the root record, the program itself. The records follow\n these rules:\n\n - A report replaces its record completely. A value the report leaves\n   out is gone from the record afterwards. It doesn't keep its old value.\n - A GHOSTTY_PROGRAM_STATUS_STATE_CLEAR report removes the record with\n   its id and every record beneath it, so clearing \"build\" also removes\n   \"build/test\". A clear report with an empty id removes every record.\n - A record without an app takes it from its nearest ancestor that has\n   one. If the root record has app \"deploy\" and the record \"us-east\"\n   has none, show \"us-east\" with app \"deploy\" too.\n - When a new shell prompt starts (GHOSTTY_SEMANTIC_PROMPT_PROMPT_START\n   from the GHOSTTY_TERMINAL_OPT_SEMANTIC_PROMPT callback) or the program\n   running in the terminal exits, remove `working` and `blocked` records.\n   You may remove `idle` records too. Keep `done` and `error` records\n   until the user has seen them, for example until they next focus the\n   terminal.\n - Keep at most 256 records, and allow at least 64. When a new record\n   would go over your limit, remove the one that was updated longest ago.\n\n A full reset (RIS, `ESC c`) removes every record. When that happens,\n the terminal calls this with a GHOSTTY_PROGRAM_STATUS_STATE_CLEAR report\n and an empty id, and then calls the GHOSTTY_TERMINAL_OPT_RESET callback.\n\n `title` and `message` are already decoded and contain no control\n characters, but they are still untrusted text from the program. Don't\n treat them as markup. If you show them outside the terminal, such as in\n a tab or a notification, remove invisible formatting characters like\n text direction overrides, and say which terminal the text came from so\n a program can't pretend to be one running elsewhere.\n\n Example, where `Records`, `records_clear`, and `records_put` stand in for\n your application's own storage:\n\n void on_program_status(GhosttyTerminal terminal,\n                        void* userdata,\n                        const GhosttyTerminalProgramStatus* report) {\n   (void)terminal;\n   Records* records = userdata;\n\n   if (report->state == GHOSTTY_PROGRAM_STATUS_STATE_CLEAR) {\n     // Remove this record and every record beneath it. An empty id\n     // removes every record.\n     records_clear(records, report->id);\n     return;\n   }\n\n   // Replace the whole record. The strings are only valid during this\n   // call, so records_put must copy them.\n   records_put(records, report->id, report->state, report->message);\n }\n\n // Set write_pty too, so programs that check for support get a reply.\n ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_USERDATA, records);\n ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY,\n                      (const void*)on_write_pty);\n ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS,\n                      (const void*)on_program_status);\n\n               call.\n"]
+pub type TerminalProgramStatusFn = ::std::option::Option<
+    unsafe extern "C" fn(
+        terminal: Terminal,
+        userdata: *mut ::std::os::raw::c_void,
+        report: *const TerminalProgramStatus,
+    ),
+>;
 pub mod SemanticPromptKind {
     #[doc = " The step of a command that a shell integration event reports.\n\n More kinds may be added in later versions, so ignore any kind you don't\n handle.\n"]
     pub type Type = ::std::os::raw::c_int;
@@ -3116,9 +3233,99 @@ pub type TerminalSemanticPromptFn = ::std::option::Option<
         event: *const TerminalSemanticPrompt,
     ),
 >;
-#[doc = " Callback function type for reset.\n\n Called when the running program performs a full reset (RIS, `ESC c`).\n A full reset clears the screen and scrollback, returns modes to their\n defaults, and clears the title and working directory. Use this callback\n to reset any state your application keeps about what's running in the\n terminal, such as the current command.\n\n The terminal has already reset itself when this is called. The\n GHOSTTY_TERMINAL_OPT_TITLE_CHANGED and GHOSTTY_TERMINAL_OPT_PWD_CHANGED\n callbacks are not called for the cleared title and working directory,\n so update anything you show for them here. A full reset also removes\n any progress report. If you set GHOSTTY_TERMINAL_OPT_PROGRESS_REPORT,\n that callback is called before this one.\n\n A soft reset (DECSTR, `CSI ! p`) only resets a few modes and doesn't\n call this.\n\n"]
+#[doc = " Callback function type for reset.\n\n Called when the running program performs a full reset (RIS, `ESC c`).\n A full reset clears the screen and scrollback, returns modes to their\n defaults, and clears the title and working directory. Use this callback\n to reset any state your application keeps about what's running in the\n terminal, such as the current command.\n\n The terminal has already reset itself when this is called. The\n GHOSTTY_TERMINAL_OPT_TITLE_CHANGED and GHOSTTY_TERMINAL_OPT_PWD_CHANGED\n callbacks are not called for the cleared title and working directory,\n so update anything you show for them here. A full reset also removes\n any progress report and program status records. If you set\n GHOSTTY_TERMINAL_OPT_PROGRESS_REPORT or\n GHOSTTY_TERMINAL_OPT_PROGRAM_STATUS, those callbacks are called before\n this one.\n\n A soft reset (DECSTR, `CSI ! p`) keeps the screen, title and working\n directory, and doesn't call this.\n\n"]
 pub type TerminalResetFn = ::std::option::Option<
     unsafe extern "C" fn(terminal: Terminal, userdata: *mut ::std::os::raw::c_void),
+>;
+pub mod TerminalResizeWindowTag {
+    #[doc = " The kind of window resize request passed to a\n GhosttyTerminalResizeWindowFn callback.\n\n New kinds may be added in later versions. Callbacks should ignore any\n tag they don't handle.\n"]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " Resize the window's text area to a size in rows and columns\n (CSI 8 ; rows ; columns t). The value is in `value.grid`."]
+    pub const GHOSTTY_TERMINAL_RESIZE_WINDOW_GRID: Type = 0;
+    #[doc = " Resize the window's text area to a size in rows and columns\n (CSI 8 ; rows ; columns t). The value is in `value.grid`."]
+    pub const GHOSTTY_TERMINAL_RESIZE_WINDOW_MAX_VALUE: Type = 2147483647;
+}
+#[doc = " A request to resize the window's text area to a size in rows and columns.\n"]
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct TerminalResizeWindowGrid {
+    #[doc = " Requested height in rows, or 0 to keep the current height."]
+    pub rows: u16,
+    #[doc = " Requested width in columns, or 0 to keep the current width."]
+    pub columns: u16,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of TerminalResizeWindowGrid"]
+        [::std::mem::size_of::<TerminalResizeWindowGrid>() - 4usize];
+    ["Alignment of TerminalResizeWindowGrid"]
+        [::std::mem::align_of::<TerminalResizeWindowGrid>() - 2usize];
+    ["Offset of field: TerminalResizeWindowGrid::rows"]
+        [::std::mem::offset_of!(TerminalResizeWindowGrid, rows) - 0usize];
+    ["Offset of field: TerminalResizeWindowGrid::columns"]
+        [::std::mem::offset_of!(TerminalResizeWindowGrid, columns) - 2usize];
+};
+#[doc = " Window resize request value.\n"]
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union TerminalResizeWindowValue {
+    #[doc = " Size in rows and columns (GHOSTTY_TERMINAL_RESIZE_WINDOW_GRID)."]
+    pub grid: TerminalResizeWindowGrid,
+    #[doc = " Padding for ABI compatibility. Do not use."]
+    pub _padding: [u64; 2usize],
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of TerminalResizeWindowValue"]
+        [::std::mem::size_of::<TerminalResizeWindowValue>() - 16usize];
+    ["Alignment of TerminalResizeWindowValue"]
+        [::std::mem::align_of::<TerminalResizeWindowValue>() - 8usize];
+    ["Offset of field: TerminalResizeWindowValue::grid"]
+        [::std::mem::offset_of!(TerminalResizeWindowValue, grid) - 0usize];
+    ["Offset of field: TerminalResizeWindowValue::_padding"]
+        [::std::mem::offset_of!(TerminalResizeWindowValue, _padding) - 0usize];
+};
+impl Default for TerminalResizeWindowValue {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " A request from the running program to resize the window.\n"]
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct TerminalResizeWindow {
+    pub tag: TerminalResizeWindowTag::Type,
+    pub value: TerminalResizeWindowValue,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of TerminalResizeWindow"][::std::mem::size_of::<TerminalResizeWindow>() - 24usize];
+    ["Alignment of TerminalResizeWindow"][::std::mem::align_of::<TerminalResizeWindow>() - 8usize];
+    ["Offset of field: TerminalResizeWindow::tag"]
+        [::std::mem::offset_of!(TerminalResizeWindow, tag) - 0usize];
+    ["Offset of field: TerminalResizeWindow::value"]
+        [::std::mem::offset_of!(TerminalResizeWindow, value) - 8usize];
+};
+impl Default for TerminalResizeWindow {
+    fn default() -> Self {
+        let mut s = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(s.as_mut_ptr(), 0, 1);
+            s.assume_init()
+        }
+    }
+}
+#[doc = " Callback function type for window resize requests.\n\n Called synchronously when the running program asks to resize the window,\n such as with CSI 8 ; rows ; columns t. Check `request->tag` first, because\n more kinds of requests may be reported in later versions. The terminal is\n not resized by this: the embedder decides whether to allow the request,\n and if so resizes its window and the terminal. Letting any\n program resize the window is a nuisance at best, so consider making this\n opt-in for users.\n\n"]
+pub type TerminalResizeWindowFn = ::std::option::Option<
+    unsafe extern "C" fn(
+        terminal: Terminal,
+        userdata: *mut ::std::os::raw::c_void,
+        request: *const TerminalResizeWindow,
+    ),
 >;
 #[doc = " Callback function type for color scheme queries (CSI ? 996 n).\n\n Called when the terminal receives a color scheme device status report\n query. Return true and fill *out_scheme with the current color scheme,\n or return false to silently ignore the query.\n\n"]
 pub type TerminalColorSchemeFn = ::std::option::Option<
@@ -3140,7 +3347,7 @@ pub type TerminalDeviceAttributesFn = ::std::option::Option<
 pub type TerminalEnquiryFn = ::std::option::Option<
     unsafe extern "C" fn(terminal: Terminal, userdata: *mut ::std::os::raw::c_void) -> String,
 >;
-#[doc = " Callback function type for terminal size reports.\n\n Called in response to XTWINOPS size queries (CSI 14/16/18 t) and when VT\n input enables in-band size reports (mode 2048).\n Return true and fill *out_size with the current terminal geometry,\n or return false to suppress the report.\n\n mode 2048 report\n"]
+#[doc = " Callback function type for terminal size reports.\n\n Called in response to XTWINOPS size queries (CSI 14/16/18/19 t) and when VT\n input enables in-band size reports (mode 2048).\n Return true and fill *out_size with the current terminal geometry,\n or return false to suppress the report.\n\n mode 2048 report\n"]
 pub type TerminalSizeFn = ::std::option::Option<
     unsafe extern "C" fn(
         terminal: Terminal,
@@ -3206,7 +3413,7 @@ pub mod TerminalOption {
     pub const XTVERSION: Type = 4;
     #[doc = " Callback invoked when the terminal title changes via escape\n sequences (e.g. OSC 0 or OSC 2). Set to NULL to ignore title\n change events.\n\n Input type: GhosttyTerminalTitleChangedFn"]
     pub const TITLE_CHANGED: Type = 5;
-    #[doc = " Callback invoked in response to XTWINOPS size queries\n (CSI 14/16/18 t). Set to NULL to silently ignore size queries.\n\n Input type: GhosttyTerminalSizeFn"]
+    #[doc = " Callback invoked in response to XTWINOPS size queries\n (CSI 14/16/18/19 t). Set to NULL to silently ignore size queries.\n\n Input type: GhosttyTerminalSizeFn"]
     pub const SIZE: Type = 6;
     #[doc = " Callback invoked in response to a color scheme device status\n report query (CSI ? 996 n). Return true and fill the out pointer\n to report the current scheme, or return false to silently ignore.\n Set to NULL to ignore color scheme queries.\n\n Input type: GhosttyTerminalColorSchemeFn"]
     pub const COLOR_SCHEME: Type = 7;
@@ -3260,9 +3467,9 @@ pub mod TerminalOption {
     pub const CONTINUATION_MAX_BYTES: Type = 31;
     #[doc = " Enable window title reports in response to CSI 21 t.\n\n This is disabled by default because a running program can set a title and\n query it back into the pty input stream, potentially injecting commands\n that execute after user interaction. Passing NULL or a pointer to false\n disables title reporting.\n\n Input type: bool*"]
     pub const TITLE_REPORT: Type = 32;
-    #[doc = " Set the reset default for a terminal mode.\n\n This unconditionally updates both the current value and the value restored\n by a full terminal reset (RIS).\n\n Some recognized modes represent transitions or mirror additional terminal\n state and cannot safely be configured as reset defaults. Those modes return\n GHOSTTY_INVALID_VALUE. A NULL value pointer also returns\n GHOSTTY_INVALID_VALUE.\n\n Input type: GhosttyTerminalModeConfig*"]
+    #[doc = " Set the reset default for a terminal mode.\n\n This unconditionally updates both the current value and the value restored\n by a terminal reset. RIS restores every mode, and DECSTR only a subset.\n\n Some recognized modes represent transitions or mirror additional terminal\n state and cannot safely be configured as reset defaults. Those modes return\n GHOSTTY_INVALID_VALUE. A NULL value pointer also returns\n GHOSTTY_INVALID_VALUE.\n\n Input type: GhosttyTerminalModeConfig*"]
     pub const MODE_DEFAULT: Type = 33;
-    #[doc = " Set the current value of a terminal mode.\n\n This does not change the value restored by a full terminal reset (RIS).\n A NULL value pointer or unknown mode returns GHOSTTY_INVALID_VALUE.\n\n Input type: GhosttyTerminalModeConfig*"]
+    #[doc = " Set the current value of a terminal mode.\n\n This does not change the value restored by a reset (RIS or DECSTR).\n A NULL value pointer or unknown mode returns GHOSTTY_INVALID_VALUE.\n\n Input type: GhosttyTerminalModeConfig*"]
     pub const MODE: Type = 34;
     #[doc = " Callback for escape sequences that libghostty-vt does not implement.\n Set to NULL to stop receiving them.\n\n GHOSTTY_TERMINAL_OPT_UNKNOWN_MAX_BYTES must also be set, or the\n callback is never called. See the Unsupported Sequences section of the\n terminal documentation for an example.\n\n Input type: GhosttyTerminalUnknownSequenceFn"]
     pub const UNKNOWN_SEQUENCE: Type = 35;
@@ -3282,7 +3489,15 @@ pub mod TerminalOption {
     pub const SEMANTIC_PROMPT: Type = 42;
     #[doc = " Callback invoked after the running program performs a full reset\n (RIS, ESC c). Set to NULL to ignore resets.\n\n Input type: GhosttyTerminalResetFn"]
     pub const RESET: Type = 43;
-    #[doc = " Callback invoked after the running program performs a full reset\n (RIS, ESC c). Set to NULL to ignore resets.\n\n Input type: GhosttyTerminalResetFn"]
+    #[doc = " Enable checksum reports in response to DECRQCRA (CSI Pi ; Pg ; Pt ; Pl ;\n Pb ; Pr * y).\n\n This is disabled by default because a running program can checksum the\n screen one cell at a time and so read back everything on it, including\n output from other programs. Passing NULL or a pointer to false disables\n checksum reporting.\n\n While this is disabled, XTCHECKSUM (CSI Ps # y), which changes how the\n checksum is calculated, is ignored as well.\n\n Input type: bool*"]
+    pub const XT_CHECKSUM_REPORT: Type = 44;
+    #[doc = " Set how the DECRQCRA checksum is calculated after a reset (RIS or DECSTR).\n This also changes the current calculation.\n\n The value holds the same bits as XTCHECKSUM (CSI Ps # y) and xterm's\n checksumExtension resource, which a running program can still use to\n change the calculation until the next reset:\n\n   - 1: don't negate the result\n   - 2: don't add the video attributes of each cell\n   - 4: don't omit blanks\n   - 8: count cells that were never written to as spaces\n   - 16: use full codepoints instead of the DEC 8-bit values\n\n Zero, or passing NULL, is the calculation of a real DEC terminal.\n Values above 31 return GHOSTTY_INVALID_VALUE.\n\n Input type: uint8_t*"]
+    pub const XT_CHECKSUM_EXTENSION: Type = 45;
+    #[doc = " Callback invoked when the running program sends a program status\n report via OSC 7501. Set to NULL to ignore these reports.\n\n Programs may ask whether the terminal supports the protocol by\n sending `OSC 7501 ; ?`. While this callback is set, the terminal\n answers through GHOSTTY_TERMINAL_OPT_WRITE_PTY with `?` followed by\n the states and kinds it accepts:\n\n program:  ESC ] 7501 ; ? ST\n terminal: ESC ] 7501 ; ?:states=idle,working,done,blocked,error:kinds=permission,question,auth ST\n\n While this callback is NULL, the query gets no reply, so a program\n that asks sees the protocol as unsupported. Asking is optional, so\n programs may send reports anyway. Those are dropped. Set a write_pty\n callback too, or programs never see the reply.\n\n Input type: GhosttyTerminalProgramStatusFn"]
+    pub const PROGRAM_STATUS: Type = 46;
+    #[doc = " Callback invoked when the running program asks to resize the window,\n such as with CSI 8 ; rows ; columns t. Set to NULL to ignore resize\n requests.\n\n Input type: GhosttyTerminalResizeWindowFn"]
+    pub const RESIZE_WINDOW: Type = 47;
+    #[doc = " Callback invoked when the running program asks to resize the window,\n such as with CSI 8 ; rows ; columns t. Set to NULL to ignore resize\n requests.\n\n Input type: GhosttyTerminalResizeWindowFn"]
     pub const MAX_VALUE: Type = 2147483647;
 }
 pub mod TerminalData {
@@ -3448,7 +3663,7 @@ unsafe extern "C" {
     ) -> Result::Type;
 }
 unsafe extern "C" {
-    #[doc = " Scroll the terminal viewport.\n\n Scrolls the terminal's viewport according to the given behavior.\n When using GHOSTTY_SCROLL_VIEWPORT_DELTA, set the delta field in\n the value union to specify the number of rows to scroll (negative\n for up, positive for down). When using GHOSTTY_SCROLL_VIEWPORT_ROW,\n set the row field to the absolute row offset from the top of the\n scrollable area (the same row space as the offset field of\n GhosttyTerminalScrollbar). For other behaviors, the value is ignored.\n\n"]
+    #[doc = " Scroll the terminal viewport.\n\n Scrolls the terminal's viewport according to the given behavior.\n When using GHOSTTY_SCROLL_VIEWPORT_DELTA, set the delta field in\n the value union to specify the number of rows to scroll (negative\n for up, positive for down). When using GHOSTTY_SCROLL_VIEWPORT_ROW,\n set the row field to the absolute row offset from the top of the\n scrollable area (the same row space as the offset field of\n GhosttyTerminalScrollbar). When using\n GHOSTTY_SCROLL_VIEWPORT_DELTA_PROMPT, set delta_prompt to the signed\n number of prompts to move. See GHOSTTY_SCROLL_VIEWPORT_DELTA_PROMPT for\n the navigation behavior. For other behaviors, the value is ignored.\n\n"]
     pub fn ghostty_terminal_scroll_viewport(terminal: Terminal, behavior: TerminalScrollViewport);
 }
 unsafe extern "C" {
@@ -3600,7 +3815,7 @@ pub struct FormatterTerminalOptions {
     pub emit: FormatterFormat::Type,
     #[doc = " Whether to unwrap soft-wrapped lines."]
     pub unwrap: bool,
-    #[doc = " Whether to trim trailing whitespace on non-blank lines."]
+    #[doc = " Whether to trim trailing whitespace on non-blank lines. Trailing blank\n lines are always trimmed, except in VT output without trimming, where\n they are kept as part of the layout."]
     pub trim: bool,
     #[doc = " Extra terminal state to include in styled output."]
     pub extra: FormatterTerminalExtra,
@@ -3775,7 +3990,9 @@ pub mod RenderStateData {
     pub const OVERSCAN: Type = 20;
     #[doc = " The overscan request most recently set with\n  GHOSTTY_RENDER_STATE_OPTION_OVERSCAN (GhosttyRenderStateOverscan).\n  The next update uses this request. Both sides are zero if it was\n  never set."]
     pub const OVERSCAN_REQUEST: Type = 21;
-    #[doc = " The overscan request most recently set with\n  GHOSTTY_RENDER_STATE_OPTION_OVERSCAN (GhosttyRenderStateOverscan).\n  The next update uses this request. Both sides are zero if it was\n  never set."]
+    #[doc = " Populate an existing GhosttyRenderStateImageIterator with the image\n  placements found by the last update. See \"Images\" in the render\n  state overview."]
+    pub const IMAGE_ITERATOR: Type = 22;
+    #[doc = " Populate an existing GhosttyRenderStateImageIterator with the image\n  placements found by the last update. See \"Images\" in the render\n  state overview."]
     pub const MAX_VALUE: Type = 2147483647;
 }
 pub mod RenderStateOption {
@@ -3786,6 +4003,82 @@ pub mod RenderStateOption {
     #[doc = " Request overscan rows above and below the viewport\n  (GhosttyRenderStateOverscan). The request takes effect on the next\n  update and stays in effect until it is changed. Both sides are zero\n  by default, which captures only the viewport. The rows of the last\n  update can still be read after changing the request. Expect a full\n  redraw on the update after a change. See \"Overscan\" in the render\n  state overview."]
     pub const OVERSCAN: Type = 1;
     #[doc = " Request overscan rows above and below the viewport\n  (GhosttyRenderStateOverscan). The request takes effect on the next\n  update and stays in effect until it is changed. Both sides are zero\n  by default, which captures only the viewport. The rows of the last\n  update can still be read after changing the request. Expect a full\n  redraw on the update after a change. See \"Overscan\" in the render\n  state overview."]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+pub mod ImageProtocol {
+    #[doc = " The image protocols that a terminal supports.\n\n The render state uses this to say which protocol each image placement\n came from (see GHOSTTY_RENDER_STATE_IMAGE_DATA_PROTOCOL). Use it to\n decide where to read the image's pixels. Unlike the other image types\n here, the name has no RenderState prefix, because the protocol isn't\n specific to the render state.\n\n New protocols may be added in later versions. Skip placements with a\n protocol you don't support.\n"]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " The Kitty graphics protocol. Read the image with\n  ghostty_kitty_graphics_image()."]
+    pub const KITTY: Type = 0;
+    #[doc = " The Kitty graphics protocol. Read the image with\n  ghostty_kitty_graphics_image()."]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+pub mod RenderStateImageLayer {
+    #[doc = " Where an image is drawn relative to the terminal's text.\n\n Draw the layers in this order: every image below backgrounds, then\n cell backgrounds, then images below text, then text, then images above\n text. Within a layer, draw images in order of their z-index, lowest\n first.\n"]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " Below the cell background colors."]
+    pub const BELOW_BACKGROUND: Type = 0;
+    #[doc = " Above the cell background colors and below the text."]
+    pub const BELOW_TEXT: Type = 1;
+    #[doc = " Above the text."]
+    pub const ABOVE_TEXT: Type = 2;
+    #[doc = " Above the text."]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+pub mod RenderStateKittyPlacementKind {
+    #[doc = " The kinds of Kitty graphics placements in a render state's image list.\n\n Read with GHOSTTY_RENDER_STATE_IMAGE_DATA_KITTY_KIND. Most renderers\n can draw every kind the same way. The kind is useful when you need to\n tell them apart, for example for debugging.\n"]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " Part of a virtual placement: one run of neighboring placeholder\n  cells in a single row. It is always one row tall."]
+    pub const VIRTUAL: Type = 0;
+    #[doc = " A relative placement attached to a virtual placement. Kitty\n  graphics lets a program position one image relative to another.\n  When the image it is attached to is a virtual placement, its\n  position also depends on the placeholder cells.\n\n  The position is measured from the top-left corner of the virtual\n  placement's cells on screen: the leftmost column and the topmost\n  row that any of its cells use. This matches Kitty. If none of those\n  cells are in the viewport, the relative placement is not included."]
+    pub const RELATIVE: Type = 1;
+    #[doc = " A relative placement attached to a virtual placement. Kitty\n  graphics lets a program position one image relative to another.\n  When the image it is attached to is a virtual placement, its\n  position also depends on the placeholder cells.\n\n  The position is measured from the top-left corner of the virtual\n  placement's cells on screen: the leftmost column and the topmost\n  row that any of its cells use. This matches Kitty. If none of those\n  cells are in the viewport, the relative placement is not included."]
+    pub const MAX_VALUE: Type = 2147483647;
+}
+pub mod RenderStateImageData {
+    #[doc = " Data you can read about the current placement of an image iterator\n with ghostty_render_state_image_get().\n\n The type in parentheses is the type that the `out` pointer must point\n to. All pixel values use the cell size set with ghostty_terminal_resize().\n\n Some values only apply to one protocol, and have the protocol in their\n name. For example, GHOSTTY_RENDER_STATE_IMAGE_DATA_KITTY_KIND only\n applies to Kitty graphics placements. Reading one of these for a\n placement from another protocol returns GHOSTTY_NO_VALUE.\n"]
+    pub type Type = ::std::os::raw::c_int;
+    #[doc = " Invalid value. Querying it returns GHOSTTY_INVALID_VALUE."]
+    pub const INVALID: Type = 0;
+    #[doc = " The protocol the image came from (GhosttyImageProtocol)."]
+    pub const PROTOCOL: Type = 1;
+    #[doc = " The ID of the image to draw (uint32_t). IDs are only unique within\n  one protocol, so look the image up in the storage of its protocol.\n  For Kitty graphics, use ghostty_kitty_graphics_image()."]
+    pub const IMAGE_ID: Type = 2;
+    #[doc = " The generation of the image's contents (uint64_t). It changes\n  whenever the image's pixels change, including when an animation\n  moves to a new frame. Use it as part of your texture cache key,\n  with the protocol and image ID: if it matches the texture you have,\n  you don't need to read the pixels again. For Kitty graphics, this\n  is the same value as GHOSTTY_KITTY_IMAGE_DATA_GENERATION."]
+    pub const IMAGE_GENERATION: Type = 3;
+    #[doc = " The layer to draw the image in (GhosttyRenderStateImageLayer)."]
+    pub const LAYER: Type = 4;
+    #[doc = " The z-index (int32_t), which orders images within a layer. Images\n  with a lower z-index are drawn first. The value comes from the\n  image's protocol. For Kitty graphics, it is the z-index the program\n  asked for, and virtual placements are always -1."]
+    pub const Z: Type = 5;
+    #[doc = " The column of the top-left cell (int32_t), where 0 is the leftmost\n  column of the viewport. A placement can start to the left of the\n  viewport, which gives a negative value."]
+    pub const VIEWPORT_COL: Type = 6;
+    #[doc = " The row of the top-left cell (int32_t), where 0 is the top row of\n  the viewport. A placement in an overscan row above the viewport has\n  a negative row, the same as GHOSTTY_RENDER_STATE_ROW_DATA_VIEWPORT_Y.\n  A placement can also start above the viewport."]
+    pub const VIEWPORT_ROW: Type = 7;
+    #[doc = " The number of columns of cells the placement covers (uint32_t)."]
+    pub const GRID_COLS: Type = 8;
+    #[doc = " The number of rows of cells the placement covers (uint32_t)."]
+    pub const GRID_ROWS: Type = 9;
+    #[doc = " How far the image starts from the left edge of the top-left cell,\n  in pixels (uint32_t). An image that is narrower than its cells is\n  centered, so this can be larger than a cell is wide."]
+    pub const CELL_OFFSET_X: Type = 10;
+    #[doc = " How far the image starts from the top edge of the top-left cell,\n  in pixels (uint32_t). An image that is shorter than its cells is\n  centered, so this can be larger than a cell is tall."]
+    pub const CELL_OFFSET_Y: Type = 11;
+    #[doc = " The width to draw the image at, in pixels (uint32_t)."]
+    pub const PIXEL_WIDTH: Type = 12;
+    #[doc = " The height to draw the image at, in pixels (uint32_t)."]
+    pub const PIXEL_HEIGHT: Type = 13;
+    #[doc = " The left edge of the part of the image to draw, in image pixels\n  (uint32_t)."]
+    pub const SOURCE_X: Type = 14;
+    #[doc = " The top edge of the part of the image to draw, in image pixels\n  (uint32_t)."]
+    pub const SOURCE_Y: Type = 15;
+    #[doc = " The width of the part of the image to draw, in image pixels\n  (uint32_t). Scale it to PIXEL_WIDTH when drawing."]
+    pub const SOURCE_WIDTH: Type = 16;
+    #[doc = " The height of the part of the image to draw, in image pixels\n  (uint32_t). Scale it to PIXEL_HEIGHT when drawing."]
+    pub const SOURCE_HEIGHT: Type = 17;
+    #[doc = " Kitty graphics only: the placement ID (uint32_t), or 0 if there\n  isn't one.\n\n  For a virtual placement, this is the placement ID that the\n  placeholder cells ask for. Cells that don't ask for one show the\n  image's virtual placement, whichever it is, and report 0. For a\n  relative placement, this is the ID the program gave it, or 0 if it\n  didn't give one."]
+    pub const KITTY_PLACEMENT_ID: Type = 18;
+    #[doc = " Kitty graphics only: the kind of placement\n  (GhosttyRenderStateKittyPlacementKind)."]
+    pub const KITTY_KIND: Type = 19;
+    #[doc = " Kitty graphics only: the kind of placement\n  (GhosttyRenderStateKittyPlacementKind)."]
     pub const MAX_VALUE: Type = 2147483647;
 }
 pub mod RenderStateRowData {
@@ -4110,6 +4403,39 @@ unsafe extern "C" {
     pub fn ghostty_render_state_row_cells_free(cells: RenderStateRowCells);
 }
 unsafe extern "C" {
+    #[doc = " Create a new image iterator.\n\n The iterator starts out empty. Fill it from a render state with\n ghostty_render_state_get() and GHOSTTY_RENDER_STATE_DATA_IMAGE_ITERATOR.\n You can keep one iterator for the lifetime of your renderer and fill it\n again after every update. See \"Images\" in the render state overview for\n a complete example.\n\n         failure\n"]
+    pub fn ghostty_render_state_image_iterator_new(
+        allocator: *const Allocator,
+        out_iterator: *mut RenderStateImageIterator,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Free an image iterator.\n\n"]
+    pub fn ghostty_render_state_image_iterator_free(iterator: RenderStateImageIterator);
+}
+unsafe extern "C" {
+    #[doc = " Move an image iterator to the next image placement.\n\n Call this before reading the first placement, and keep calling it\n until it returns false.\n\n The order of placements is not the order to draw them in. Sort them\n by layer (GHOSTTY_RENDER_STATE_IMAGE_DATA_LAYER) and then by z-index\n (GHOSTTY_RENDER_STATE_IMAGE_DATA_Z) first.\n\n Only placements with something to draw are returned. For example,\n placements of an image the terminal hasn't fully received yet are\n skipped.\n\n The iterator reads from the render state that filled it. After the\n next update of that render state, fill the iterator again before\n using it.\n\n         no more placements\n"]
+    pub fn ghostty_render_state_image_iterator_next(iterator: RenderStateImageIterator) -> bool;
+}
+unsafe extern "C" {
+    #[doc = " Read one value from the current placement of an image iterator.\n\n The `out` pointer must point to a value of the type listed for `data`\n in GhosttyRenderStateImageData. To read several values at once, use\n ghostty_render_state_image_get_multi().\n\n        ghostty_render_state_image_iterator_next()\n         applies to another protocol. GHOSTTY_INVALID_VALUE if the\n         iterator is NULL, is not on a placement, or `data` is not a\n         valid value.\n"]
+    pub fn ghostty_render_state_image_get(
+        iterator: RenderStateImageIterator,
+        data: RenderStateImageData::Type,
+        out: *mut ::std::os::raw::c_void,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
+    #[doc = " Read several values from the current placement of an image iterator in\n one call.\n\n This works like calling ghostty_render_state_image_get() once for each\n key. `values[i]` receives the value for `keys[i]`. The keys are read in\n order, and reading stops at the first error.\n\n        ghostty_render_state_image_iterator_next()\n             written before any error\n         error from the first value that failed\n"]
+    pub fn ghostty_render_state_image_get_multi(
+        iterator: RenderStateImageIterator,
+        count: usize,
+        keys: *const RenderStateImageData::Type,
+        values: *mut *mut ::std::os::raw::c_void,
+        out_written: *mut usize,
+    ) -> Result::Type;
+}
+unsafe extern "C" {
     #[doc = " Free a tracked grid reference.\n\n Passing NULL is allowed and has no effect. A tracked reference may be freed\n after the terminal that created it is freed.\n\n"]
     pub fn ghostty_tracked_grid_ref_free(ref_: TrackedGridRef);
 }
@@ -4340,7 +4666,7 @@ unsafe extern "C" {
     #[doc = " Get the value from an SGR attribute.\n\n This function returns a pointer to the value union from an SGR attribute. Use\n the tag to determine which field of the union is valid. Primarily useful in\n WebAssembly environments where accessing struct fields directly is difficult.\n\n"]
     pub fn ghostty_sgr_attribute_value(attr: *mut SgrAttribute) -> *mut SgrAttributeValue;
 }
-#[doc = " Result of decoding an image.\n\n The `data` buffer must be allocated through the allocator provided to\n the decode callback. The library takes ownership and will free it\n with the same allocator."]
+#[doc = " A decoded image, filled in by a decode callback such as\n GhosttySysDecodePngFn.\n\n Pixels are 8-bit RGBA: four bytes per pixel, stored row by row starting\n at the top-left corner, with no padding between rows. A complete image\n is therefore `width * height * 4` bytes long.\n\n The pixel buffer must be allocated with the allocator passed to the\n decode callback. When the callback returns true, the library takes\n ownership of the buffer and frees it with that same allocator."]
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct SysImage {
@@ -4348,9 +4674,9 @@ pub struct SysImage {
     pub width: u32,
     #[doc = " Image height in pixels."]
     pub height: u32,
-    #[doc = " Pointer to the decoded RGBA pixel data."]
+    #[doc = " The decoded RGBA pixels, allocated with the allocator passed to\n the decode callback."]
     pub data: *mut u8,
-    #[doc = " Length of the pixel data in bytes."]
+    #[doc = " Length of `data` in bytes. This must be the exact size that was\n requested from the allocator, because the library uses it to free\n the buffer."]
     pub data_len: usize,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
@@ -4391,7 +4717,7 @@ pub type SysLogFn = ::std::option::Option<
         message_len: usize,
     ),
 >;
-#[doc = " Callback type for PNG decoding.\n\n Decodes raw PNG data into RGBA pixels. The output pixel data must be\n allocated through the provided allocator. The library takes ownership\n of the buffer and will free it with the same allocator.\n"]
+#[doc = " Callback type for PNG decoding.\n\n The library calls this when it receives a PNG image and needs the raw\n pixels. The callback decodes the PNG bytes in @p data and describes\n the result in @p out. See the example in the @ref sys overview for a\n complete callback.\n\n ### On success\n\n Allocate the pixel buffer with ghostty_alloc() and @p allocator, write\n the decoded pixels into it, set all four fields of @p out, and return\n true. The library then owns the buffer and frees it with the same\n allocator. See GhosttySysImage for the expected pixel layout.\n\n The allocator limits how much memory a single image may use, so\n ghostty_alloc() can return NULL for very large images. Treat that as\n a failure.\n\n ### On failure\n\n Free anything that was allocated and return false. The library does\n not read @p out in this case, and the image is rejected.\n\n ### The output struct starts zeroed\n\n The library sets every field of @p out to zero before it calls the\n callback. This has two practical effects:\n\n - If the callback returns true but `data` is still NULL, the library\n   treats the call as a failure.\n - Language bindings can store a pointer into @p out directly. Some\n   runtimes, such as Go, require memory to be initialized before a\n   pointer is written into it, and this guarantee satisfies that\n   requirement.\n\n Only @p out is zeroed. Memory returned by ghostty_alloc() is not.\n\n callback.\n\n                  call, and filled in by the callback on success.\n         false on failure"]
 pub type SysDecodePngFn = ::std::option::Option<
     unsafe extern "C" fn(
         userdata: *mut ::std::os::raw::c_void,
@@ -5119,7 +5445,7 @@ unsafe extern "C" {
     ) -> Result::Type;
 }
 unsafe extern "C" {
-    #[doc = " Check if paste data is safe to paste into the terminal.\n\n Data is considered unsafe if it contains:\n - Newlines (`\\n`) which can inject commands\n - The bracketed paste end sequence (`\\x1b[201~`) which can be used\n   to exit bracketed paste mode and inject commands\n\n This check is conservative and considers data unsafe regardless of\n current terminal state. ghostty_terminal_paste() applies the\n terminal-state-aware rule itself (newlines are safe inside a\n bracketed paste); use this to apply the stricter rule on top.\n"]
+    #[doc = " Check if paste data is safe to paste into the terminal.\n\n Data is considered unsafe if it contains:\n - Line terminators (`\\n` or `\\r`) which can inject commands. A\n   carriage return is what the Enter key sends, so it is as dangerous\n   as a newline on an unbracketed paste.\n - The bracketed paste end sequence (`\\x1b[201~`) which can be used\n   to exit bracketed paste mode and inject commands\n\n This check is conservative and considers data unsafe regardless of\n current terminal state. ghostty_terminal_paste() applies the\n terminal-state-aware rule itself (line terminators are safe inside a\n bracketed paste); use this to apply the stricter rule on top.\n"]
     pub fn ghostty_paste_is_safe(data: *const ::std::os::raw::c_char, len: usize) -> bool;
 }
 unsafe extern "C" {

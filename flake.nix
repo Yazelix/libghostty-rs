@@ -19,7 +19,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     ghostty = {
-      url = "github:ghostty-org/ghostty/3425025e585a3403340d4dc6d65132f42e05e605";
+      url = "github:ghostty-org/ghostty/8c425a7bd57de848aa83cb9b003b1ecd6037c56a";
     };
   };
 
@@ -79,7 +79,14 @@
         craneCheckLib = (crane.mkLib pkgs).overrideToolchain checkToolchain;
         unfilteredRoot = ./.;
 
-        zigPkg = zig.packages.${system}."0.16.0";
+        # Zig 0.17 with Ghostty's backport of a later Zig fix for iOS process
+        # replacement, which the vendored iOS xcframework build needs. The
+        # patch ships with the pinned Ghostty source, so the two stay in step.
+        zigPkg = zig.packages.${system}."0.17.0".overrideAttrs (previousAttrs: {
+          patches =
+            (previousAttrs.patches or [])
+            ++ ["${ghostty}/nix/patches/zig-0.17-ios-process-replace.patch"];
+        });
         ghosttyLib = ghostty.packages.${system}.libghostty-vt;
 
         miriCommand = pkgs.writeShellApplication {
