@@ -29,8 +29,8 @@
 //! produced, never in one piece. The callback may be invoked several times for
 //! a single paste; the pieces must be written to the pty in order.
 //!
-//! Text that could inject commands (a newline when unbracketed, or the
-//! bracketed paste terminator when bracketed) is refused with
+//! Text that could inject commands (a newline or carriage return when
+//! unbracketed, or the bracketed paste terminator when bracketed) is refused with
 //! [`Error::Rejected`](crate::Error::Rejected) and nothing written unless
 //! [`Options::with_allow_unsafe`] is set. The usual flow is to call once,
 //! confirm with the user on [`Error::Rejected`](crate::Error::Rejected), and call again with
@@ -116,7 +116,8 @@ use crate::{
 /// Check if paste data is safe to paste into the terminal.
 ///
 /// Data is considered unsafe if it contains:
-///   * Newlines (`\n`) which can inject commands
+///   * Line terminators (`\n` or `\r`) which can inject commands. A carriage return is what the
+///     Enter key sends, so it is as dangerous as a newline on an unbracketed paste.
 ///   * The bracketed paste end sequence (`\x1b[201~`) which can be used to exit bracketed paste
 ///     mode and inject commands
 ///

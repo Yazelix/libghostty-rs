@@ -505,7 +505,7 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
 
     /// Set the current value of a terminal mode.
     ///
-    /// This does not change the value restored by a full terminal reset (RIS).
+    /// This does not change the value restored by a reset (RIS or DECSTR).
     pub fn set_mode(&mut self, mode: Mode, value: bool) -> Result<&mut Self> {
         let mode = ffi::TerminalModeConfig {
             mode: mode.into(),
@@ -526,7 +526,8 @@ impl<'alloc: 'cb, 'cb> Terminal<'alloc, 'cb> {
     /// Set the reset default for a terminal mode.
     ///
     /// This unconditionally updates both the current value and the value
-    /// restored by a full terminal reset (RIS).
+    /// restored by a terminal reset. RIS restores every mode, and DECSTR only
+    /// a subset.
     ///
     /// Some recognized modes represent transitions or mirror additional
     /// terminal state and cannot safely be configured as reset defaults.
@@ -2852,7 +2853,7 @@ handlers! {
     }
 
     /// Call the given function in response to XTWINOPS size queries
-    /// (CSI 14/16/18 t) and when VT input enables in-band size reports (mode
+    /// (CSI 14/16/18/19 t) and when VT input enables in-band size reports (mode
     /// 2048). Return the current terminal geometry, or `None` to suppress the
     /// report.
     pub fn on_size(
