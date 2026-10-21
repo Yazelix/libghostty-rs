@@ -67,6 +67,15 @@ fn main() {
 }
 
 const PREFIXES: &[(&str, &str)] = &[
+    (
+        "GhosttySemanticPromptPromptKind",
+        "GHOSTTY_SEMANTIC_PROMPT_PROMPT",
+    ),
+    ("GhosttySemanticPromptKind", "GHOSTTY_SEMANTIC_PROMPT"),
+    (
+        "GhosttyTerminalResizeWindowTag",
+        "GHOSTTY_TERMINAL_RESIZE_WINDOW",
+    ),
     ("GhosttySearchOption", "GHOSTTY_SEARCH_OPT"),
     ("GhosttySysOption", "GHOSTTY_SYS_OPT"),
     (
